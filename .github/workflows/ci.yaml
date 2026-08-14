@@ -20,6 +20,12 @@ env:
   XMAKE_VERSION: "3.1.0"
   # Bump this when a dependency cache must be invalidated manually.
   XMAKE_CACHE_SCHEMA: "v4"
+  # Narrow protobuf-only compiler-cache experiment.
+  PROTOBUF_SCCACHE_VERSION: "v0.17.0"
+  PROTOBUF_SCCACHE_SCHEMA: "v1"
+  STFC_PROTOBUF_SCCACHE: "1"
+  # Keep sccache local; actions/cache owns persistence explicitly.
+  SCCACHE_GHA_ENABLED: "false"
   # setup-xmake normally exports this when its integrated build cache is on.
   # Keep XMake's compiler cache enabled while managing persistence ourselves.
   XMAKE_ACTION_BUILD_CACHE: "true"
@@ -27,6 +33,9 @@ env:
 jobs:
   build-win:
     runs-on: windows-2025-vs2026
+    env:
+      SCCACHE_DIR: ${{ github.workspace }}/build/.protobuf-sccache
+      SCCACHE_CACHE_SIZE: "1G"
 
     steps:
       - name: Checkout
@@ -50,6 +59,23 @@ jobs:
         uses: xmake-io/github-action-setup-xmake@v1
         with:
           xmake-version: ${{ env.XMAKE_VERSION }}
+
+      - name: Setup protobuf sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: ${{ env.PROTOBUF_SCCACHE_VERSION }}
+
+      - name: Identify Windows runner image
+        id: windows_toolchain
+        shell: pwsh
+        run: |
+          if (-not $env:ImageVersion) { throw "GitHub runner ImageVersion is unavailable" }
+          "image_version=$env:ImageVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Set protobuf compiler cache identity
+        shell: pwsh
+        run: |
+          "SCCACHE_C_CUSTOM_CACHE_BUSTER=stfc-protobuf-${{ env.PROTOBUF_SCCACHE_SCHEMA }}-xmake-${{ env.XMAKE_VERSION }}-windows-x64-release-${{ hashFiles('mods/src/prime/proto/*.proto', 'mods/xmake.lua', 'xmake.lua', 'xmake-requires.lock', 'xmake/dependencies/common.lua', 'xmake/dependencies/windows.lua', 'xmake/rules/protobuf_sccache.lua') }}" >> $env:GITHUB_ENV
 
       - name: Locate XMake caches
         id: xmake_cache_paths
@@ -77,6 +103,16 @@ jobs:
         with:
           path: build/.packages
           key: windows-x64-release-xmake-local-${{ env.XMAKE_VERSION }}-${{ env.XMAKE_CACHE_SCHEMA }}-${{ hashFiles('xmake/dependencies/common.lua', 'xmake/dependencies/windows.lua', 'xmake-requires.lock', 'xmake-packages/packages/s/spud/**') }}
+
+      - name: Restore protobuf compiler cache
+        id: restore_protobuf_sccache
+        uses: actions/cache/restore@v6
+        with:
+          path: build/.protobuf-sccache
+          key: windows-x64-release-protobuf-sccache-${{ env.PROTOBUF_SCCACHE_VERSION }}-${{ env.PROTOBUF_SCCACHE_SCHEMA }}-${{ steps.windows_toolchain.outputs.image_version }}-${{ github.sha }}
+          restore-keys: |
+            windows-x64-release-protobuf-sccache-${{ env.PROTOBUF_SCCACHE_VERSION }}-${{ env.PROTOBUF_SCCACHE_SCHEMA }}-${{ steps.windows_toolchain.outputs.image_version }}-
+            windows-x64-release-protobuf-sccache-${{ env.PROTOBUF_SCCACHE_VERSION }}-${{ env.PROTOBUF_SCCACHE_SCHEMA }}-
 
       - name: Configure
         id: configure_windows
@@ -116,8 +152,16 @@ jobs:
           include-hidden-files: true
           retention-days: 3
 
+      - name: Reset protobuf compiler cache stats
+        shell: pwsh
+        run: sccache --zero-stats
+
       - name: Build
         run: xmake build -y stfc-community-mod
+
+      - name: Report protobuf compiler cache
+        shell: pwsh
+        run: sccache --show-stats
 
       - name: Package
         shell: pwsh
@@ -148,6 +192,13 @@ jobs:
           path: build/.packages
           key: ${{ steps.restore_local_packages.outputs.cache-primary-key }}
 
+      - name: Save protobuf compiler cache
+        if: ${{ success() && !cancelled() && steps.restore_protobuf_sccache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: build/.protobuf-sccache
+          key: ${{ steps.restore_protobuf_sccache.outputs.cache-primary-key }}
+
       - name: Save XMake
         if: ${{ success() && !cancelled() && steps.restore_xmake.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v6
@@ -174,6 +225,8 @@ jobs:
     env:
       MACOSX_DEPLOYMENT_TARGET: "13.5"
       SWIFT_MODULE_CACHE_SCHEMA: "v1"
+      SCCACHE_DIR: ${{ github.workspace }}/build/.protobuf-sccache
+      SCCACHE_CACHE_SIZE: "1G"
 
     steps:
       - name: Checkout
@@ -197,6 +250,16 @@ jobs:
         uses: xmake-io/github-action-setup-xmake@v1
         with:
           xmake-version: ${{ env.XMAKE_VERSION }}
+
+      - name: Setup protobuf sccache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: ${{ env.PROTOBUF_SCCACHE_VERSION }}
+
+      - name: Set protobuf compiler cache identity
+        shell: bash
+        run: |
+          echo "SCCACHE_C_CUSTOM_CACHE_BUSTER=stfc-protobuf-${{ env.PROTOBUF_SCCACHE_SCHEMA }}-xmake-${{ env.XMAKE_VERSION }}-macos-${{ matrix.arch }}-release-${{ env.MACOSX_DEPLOYMENT_TARGET }}-${{ hashFiles('mods/src/prime/proto/*.proto', 'mods/xmake.lua', 'xmake.lua', 'xmake-requires.lock', 'xmake/dependencies/common.lua', 'xmake/dependencies/macos.lua', 'xmake/rules/protobuf_sccache.lua') }}" >> "$GITHUB_ENV"
 
       - name: Locate XMake caches
         id: xmake_cache_paths
@@ -258,6 +321,16 @@ jobs:
           restore-keys: |
             macos-${{ matrix.arch }}-release-${{ env.XMAKE_CACHE_SCHEMA }}-
 
+      - name: Restore protobuf compiler cache
+        id: restore_protobuf_sccache
+        uses: actions/cache/restore@v6
+        with:
+          path: build/.protobuf-sccache
+          key: macos-${{ matrix.arch }}-release-protobuf-sccache-${{ env.PROTOBUF_SCCACHE_VERSION }}-${{ env.PROTOBUF_SCCACHE_SCHEMA }}-${{ steps.swift_toolchain.outputs.hash }}-${{ github.sha }}
+          restore-keys: |
+            macos-${{ matrix.arch }}-release-protobuf-sccache-${{ env.PROTOBUF_SCCACHE_VERSION }}-${{ env.PROTOBUF_SCCACHE_SCHEMA }}-${{ steps.swift_toolchain.outputs.hash }}-
+            macos-${{ matrix.arch }}-release-protobuf-sccache-${{ env.PROTOBUF_SCCACHE_VERSION }}-${{ env.PROTOBUF_SCCACHE_SCHEMA }}-
+
       - name: Configure
         id: configure
         timeout-minutes: 30
@@ -292,9 +365,17 @@ jobs:
           include-hidden-files: true
           retention-days: 3
 
+      - name: Reset protobuf compiler cache stats
+        shell: bash
+        run: sccache --zero-stats
+
       - name: Build
-        # -D makes XMake print compiler-cache hit/miss statistics for this test.
+        # -D keeps the existing XMake compiler-cache diagnostics too.
         run: xmake -y -D
+
+      - name: Report protobuf compiler cache
+        shell: bash
+        run: sccache --show-stats
 
       - name: Report Swift module cache
         shell: bash
@@ -413,6 +494,13 @@ jobs:
         with:
           path: build/.swift-module-cache
           key: ${{ steps.restore_swift_modules.outputs.cache-primary-key }}
+
+      - name: Save protobuf compiler cache
+        if: ${{ success() && !cancelled() && steps.restore_protobuf_sccache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: build/.protobuf-sccache
+          key: ${{ steps.restore_protobuf_sccache.outputs.cache-primary-key }}
 
       - name: Save XMake compiler cache
         if: ${{ success() && !cancelled() && steps.restore_build.outputs.cache-hit != 'true' }}
