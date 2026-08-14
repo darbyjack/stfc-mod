@@ -113,6 +113,29 @@ rule("stfc.protobuf.cpp.sccache")
                 rawargs = true
             })
 
+        -- XMake 3.1.0 includes target.frameworks in C++ object flags, so the
+        -- macOS target contributes "-framework Cocoa" even when compiling a
+        -- generated protobuf translation unit. clang accepts that link-only
+        -- pair during -c, but sccache 0.17.0 does not model -framework as an
+        -- option-with-value and therefore mistakes "Cocoa" for another input
+        -- file. Strip only these link-only framework pairs from protobuf
+        -- compilation; keep -F/-iframework search paths and target linkage.
+        if target:is_plat("macosx") then
+            local filtered_argv = {}
+            local skip_framework_name = false
+            for _, arg in ipairs(compiler_argv) do
+                if skip_framework_name then
+                    skip_framework_name = false
+                elseif arg == "-framework" then
+                    skip_framework_name = true
+                else
+                    table.insert(filtered_argv, arg)
+                end
+            end
+            assert(not skip_framework_name, "missing framework name after -framework")
+            compiler_argv = filtered_argv
+        end
+
         local sccache = target:data("stfc.protobuf.sccache")
         if not sccache then
             -- sccache-action exports the exact executable path. Prefer it over
