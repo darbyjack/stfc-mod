@@ -71,6 +71,13 @@ jobs:
           path: ${{ steps.xmake_cache_paths.outputs.package_dir }}
           key: windows-x64-release-xmake-${{ env.XMAKE_VERSION }}-${{ env.XMAKE_CACHE_SCHEMA }}-${{ hashFiles('xmake/dependencies/common.lua', 'xmake/dependencies/windows.lua', 'xmake-requires.lock', 'xmake-packages/**') }}
 
+      - name: Restore XMake local packages
+        id: restore_local_packages
+        uses: actions/cache/restore@v6
+        with:
+          path: build/.packages
+          key: windows-x64-release-xmake-local-${{ env.XMAKE_VERSION }}-${{ env.XMAKE_CACHE_SCHEMA }}-${{ hashFiles('xmake/dependencies/common.lua', 'xmake/dependencies/windows.lua', 'xmake-requires.lock', 'xmake-packages/packages/s/spud/**') }}
+
       - name: Configure
         id: configure_windows
         timeout-minutes: 30
@@ -134,6 +141,13 @@ jobs:
           path: ${{ steps.xmake_cache_paths.outputs.package_dir }}
           key: ${{ steps.restore_packages.outputs.cache-primary-key }}
 
+      - name: Save XMake local packages
+        if: ${{ success() && !cancelled() && steps.restore_local_packages.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: build/.packages
+          key: ${{ steps.restore_local_packages.outputs.cache-primary-key }}
+
       - name: Save XMake
         if: ${{ success() && !cancelled() && steps.restore_xmake.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v6
@@ -157,6 +171,8 @@ jobs:
             artifact: macos-x86_64-build
 
     runs-on: ${{ matrix.runner }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.5"
 
     steps:
       - name: Checkout
@@ -200,7 +216,14 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ steps.xmake_cache_paths.outputs.package_dir }}
-          key: macos-${{ matrix.arch }}-release-xmake-${{ env.XMAKE_VERSION }}-${{ env.XMAKE_CACHE_SCHEMA }}-${{ steps.xmake_cache_paths.outputs.plzma_sha }}-${{ hashFiles('xmake/dependencies/common.lua', 'xmake/dependencies/macos.lua', 'xmake-requires.lock', 'xmake-packages/**') }}
+          key: macos-${{ matrix.arch }}-release-xmake-${{ env.XMAKE_VERSION }}-${{ env.XMAKE_CACHE_SCHEMA }}-${{ env.MACOSX_DEPLOYMENT_TARGET }}-${{ steps.xmake_cache_paths.outputs.plzma_sha }}-${{ hashFiles('xmake/dependencies/common.lua', 'xmake/dependencies/macos.lua', 'xmake-requires.lock', 'xmake-packages/**') }}
+
+      - name: Restore XMake local packages
+        id: restore_local_packages
+        uses: actions/cache/restore@v6
+        with:
+          path: build/.packages
+          key: macos-${{ matrix.arch }}-release-xmake-local-${{ env.XMAKE_VERSION }}-${{ env.XMAKE_CACHE_SCHEMA }}-${{ env.MACOSX_DEPLOYMENT_TARGET }}-${{ steps.xmake_cache_paths.outputs.plzma_sha }}-${{ hashFiles('xmake/dependencies/common.lua', 'xmake/dependencies/macos.lua', 'xmake-requires.lock', 'xmake-packages/packages/s/spud/**', 'xmake-packages/packages/p/PLzmaSDK/**') }}
 
       - name: Restore XMake compiler cache
         id: restore_build
@@ -221,7 +244,7 @@ jobs:
           -m release
           -y
           -v
-          --target_minver=13.5
+          --target_minver="$MACOSX_DEPLOYMENT_TARGET"
 
       - name: Verify dependency lock
         shell: bash
@@ -340,6 +363,13 @@ jobs:
         with:
           path: ${{ steps.xmake_cache_paths.outputs.package_dir }}
           key: ${{ steps.restore_packages.outputs.cache-primary-key }}
+
+      - name: Save XMake local packages
+        if: ${{ success() && !cancelled() && steps.restore_local_packages.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: build/.packages
+          key: ${{ steps.restore_local_packages.outputs.cache-primary-key }}
 
       - name: Save XMake compiler cache
         if: ${{ success() && !cancelled() && steps.restore_build.outputs.cache-hit != 'true' }}
