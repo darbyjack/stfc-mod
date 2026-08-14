@@ -3,7 +3,8 @@ name: Build
 on:
   push:
     branches:
-      - "**"
+      - "main"
+      - "dev"
   pull_request:
     branches: ["main", "dev"]
 
@@ -18,7 +19,7 @@ concurrency:
 env:
   XMAKE_VERSION: "3.1.0"
   # Bump this when a dependency cache must be invalidated manually.
-  XMAKE_CACHE_SCHEMA: "v3"
+  XMAKE_CACHE_SCHEMA: "v4"
   # setup-xmake normally exports this when its integrated build cache is on.
   # Keep XMake's compiler cache enabled while managing persistence ourselves.
   XMAKE_ACTION_BUILD_CACHE: "true"
@@ -73,7 +74,7 @@ jobs:
       - name: Configure
         id: configure_windows
         timeout-minutes: 30
-        run: xmake f -m release -y
+        run: xmake f -m release -y -v
 
       - name: Verify dependency lock
         shell: pwsh
@@ -188,23 +189,25 @@ jobs:
 
           PACKAGE_DIR="$(xmake l -c 'import("core.package.package"); print(package.installdir())')"
           test -n "$PACKAGE_DIR"
+          PLZMA_SHA="$(git -C macos-launcher/deps/PLzmaSDK rev-parse HEAD)"
+          test -n "$PLZMA_SHA"
 
           echo "package_dir=$PACKAGE_DIR" >> "$GITHUB_OUTPUT"
-          echo "utc_day=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "plzma_sha=$PLZMA_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Restore XMake packages
         id: restore_packages
         uses: actions/cache/restore@v6
         with:
           path: ${{ steps.xmake_cache_paths.outputs.package_dir }}
-          key: macos-${{ matrix.arch }}-release-xmake-${{ env.XMAKE_VERSION }}-${{ env.XMAKE_CACHE_SCHEMA }}-${{ hashFiles('xmake/dependencies/common.lua', 'xmake/dependencies/macos.lua', 'xmake-requires.lock', 'xmake-packages/**') }}
+          key: macos-${{ matrix.arch }}-release-xmake-${{ env.XMAKE_VERSION }}-${{ env.XMAKE_CACHE_SCHEMA }}-${{ steps.xmake_cache_paths.outputs.plzma_sha }}-${{ hashFiles('xmake/dependencies/common.lua', 'xmake/dependencies/macos.lua', 'xmake-requires.lock', 'xmake-packages/**') }}
 
       - name: Restore XMake compiler cache
         id: restore_build
         uses: actions/cache/restore@v6
         with:
           path: build/.build_cache
-          key: macos-${{ matrix.arch }}-release-${{ env.XMAKE_CACHE_SCHEMA }}-${{ steps.xmake_cache_paths.outputs.utc_day }}
+          key: macos-${{ matrix.arch }}-release-${{ env.XMAKE_CACHE_SCHEMA }}-${{ github.sha }}
           restore-keys: |
             macos-${{ matrix.arch }}-release-${{ env.XMAKE_CACHE_SCHEMA }}-
 
@@ -217,6 +220,7 @@ jobs:
           -a "${{ matrix.arch }}"
           -m release
           -y
+          -v
           --target_minver=13.5
 
       - name: Verify dependency lock
@@ -242,7 +246,8 @@ jobs:
           retention-days: 3
 
       - name: Build
-        run: xmake -y
+        # -D makes XMake print compiler-cache hit/miss statistics for this test.
+        run: xmake -y -D
 
       - name: Verify portable macOS linkage
         shell: bash
