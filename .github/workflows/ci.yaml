@@ -173,6 +173,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       MACOSX_DEPLOYMENT_TARGET: "13.5"
+      SWIFT_MODULE_CACHE_SCHEMA: "v1"
 
     steps:
       - name: Checkout
@@ -211,6 +212,22 @@ jobs:
           echo "package_dir=$PACKAGE_DIR" >> "$GITHUB_OUTPUT"
           echo "plzma_sha=$PLZMA_SHA" >> "$GITHUB_OUTPUT"
 
+      - name: Identify Swift toolchain
+        id: swift_toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          {
+            xcodebuild -version
+            xcrun swiftc --version
+            xcrun --sdk macosx --show-sdk-version
+          } | tee "$RUNNER_TEMP/swift-toolchain.txt"
+
+          TOOLCHAIN_HASH="$(shasum -a 256 "$RUNNER_TEMP/swift-toolchain.txt" | awk '{print $1}')"
+          test -n "$TOOLCHAIN_HASH"
+          echo "hash=$TOOLCHAIN_HASH" >> "$GITHUB_OUTPUT"
+
       - name: Restore XMake packages
         id: restore_packages
         uses: actions/cache/restore@v6
@@ -224,6 +241,13 @@ jobs:
         with:
           path: build/.packages
           key: macos-${{ matrix.arch }}-release-xmake-local-${{ env.XMAKE_VERSION }}-${{ env.XMAKE_CACHE_SCHEMA }}-${{ env.MACOSX_DEPLOYMENT_TARGET }}-${{ steps.xmake_cache_paths.outputs.plzma_sha }}-${{ hashFiles('xmake/dependencies/common.lua', 'xmake/dependencies/macos.lua', 'xmake-requires.lock', 'xmake-packages/packages/s/spud/**', 'xmake-packages/packages/p/PLzmaSDK/**') }}
+
+      - name: Restore Swift module cache
+        id: restore_swift_modules
+        uses: actions/cache/restore@v6
+        with:
+          path: build/.swift-module-cache
+          key: macos-${{ matrix.arch }}-release-swift-modules-${{ env.SWIFT_MODULE_CACHE_SCHEMA }}-${{ env.MACOSX_DEPLOYMENT_TARGET }}-${{ steps.swift_toolchain.outputs.hash }}-${{ steps.xmake_cache_paths.outputs.plzma_sha }}-${{ hashFiles('macos-launcher/xmake.lua', 'macos-launcher/src/module.modulemap', 'xmake/dependencies/macos.lua', 'xmake-requires.lock', 'xmake-packages/packages/p/PLzmaSDK/**') }}
 
       - name: Restore XMake compiler cache
         id: restore_build
@@ -271,6 +295,18 @@ jobs:
       - name: Build
         # -D makes XMake print compiler-cache hit/miss statistics for this test.
         run: xmake -y -D
+
+      - name: Report Swift module cache
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -d build/.swift-module-cache ]]; then
+            du -sh build/.swift-module-cache
+            echo "files=$(find build/.swift-module-cache -type f | wc -l | tr -d ' ')"
+          else
+            echo "::warning::Swift module cache directory was not created"
+          fi
 
       - name: Verify portable macOS linkage
         shell: bash
@@ -370,6 +406,13 @@ jobs:
         with:
           path: build/.packages
           key: ${{ steps.restore_local_packages.outputs.cache-primary-key }}
+
+      - name: Save Swift module cache
+        if: ${{ success() && !cancelled() && steps.restore_swift_modules.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: build/.swift-module-cache
+          key: ${{ steps.restore_swift_modules.outputs.cache-primary-key }}
 
       - name: Save XMake compiler cache
         if: ${{ success() && !cancelled() && steps.restore_build.outputs.cache-hit != 'true' }}
