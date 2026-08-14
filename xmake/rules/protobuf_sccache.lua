@@ -23,7 +23,10 @@ local function _proto_paths(target, sourcefile_proto)
 end
 
 local function _target_envs(target)
-    return os.joinenvs(target:pkgenvs(), os.getenvs())
+    -- XMake command execution already inherits the process environment.
+    -- Only overlay package-provided variables here; user rule sandboxes in
+    -- XMake 3.1.0 do not reliably expose os.getenvs().
+    return target:pkgenvs()
 end
 
 local function _get_protoc(target)
@@ -36,12 +39,18 @@ local function _get_protoc(target)
     return program
 end
 
-local function _get_sccache(target, envs)
+local function _get_sccache(target)
     local program = target:data("stfc.protobuf.sccache")
     if not program then
-        local tool = find_tool("sccache", {norun = true, envs = envs})
-        program = assert(tool and tool.program,
-            "STFC_PROTOBUF_SCCACHE=1 but sccache was not found on PATH")
+        -- sccache-action exports the exact executable path. Prefer that over
+        -- PATH probing so compiler-specific run environments cannot hide it.
+        program = os.getenv("SCCACHE_PATH")
+        if not program or program == "" then
+            local tool = find_tool("sccache", {norun = true})
+            program = tool and tool.program or nil
+        end
+        program = assert(program,
+            "STFC_PROTOBUF_SCCACHE=1 but sccache was not found")
         target:data_set("stfc.protobuf.sccache", program)
     end
     return program
@@ -105,14 +114,14 @@ rule(rule_name)
                 rawargs = true
             })
 
-        local envs = os.joinenvs(compiler_inst:runenvs(), os.getenvs())
+        local envs = compiler_inst:runenvs()
         local sccache_args = {compiler_program}
         table.join2(sccache_args, compiler_argv)
 
         batchcmds:mkdir(path.directory(objectfile))
         batchcmds:show_progress(opt.progress,
             "${color.build.object}sccache compiling.proto.$(mode) %s", sourcefile_cx)
-        batchcmds:vrunv(_get_sccache(target, envs), sccache_args, {envs = envs})
+        batchcmds:vrunv(_get_sccache(target), sccache_args, {envs = envs})
 
         -- Preserve the built-in rule's incremental metadata. Cross-run reuse is
         -- owned by sccache, whose key is based on compiler + args + preprocessed
