@@ -29,7 +29,7 @@ local function _target_envs(target)
     return target:pkgenvs()
 end
 
-local function _get_protoc(target)
+local function _get_protoc(target, find_tool)
     local program = target:data("stfc.protobuf.protoc")
     if not program then
         local tool = find_tool("protoc", {envs = _target_envs(target)})
@@ -39,7 +39,7 @@ local function _get_protoc(target)
     return program
 end
 
-local function _get_sccache(target)
+local function _get_sccache(target, find_tool)
     local program = target:data("stfc.protobuf.sccache")
     if not program then
         -- sccache-action exports the exact executable path. Prefer that over
@@ -72,7 +72,7 @@ rule(rule_name)
     end)
 
     on_preparecmd_file(function(target, batchcmds, sourcefile_proto, opt)
-        import("lib.detect.find_tool")
+        local find_tool = import("lib.detect.find_tool")
 
         local sourcefile_cx, sourcefile_dir, prefixdir, fileconfig = _proto_paths(target, sourcefile_proto)
         local protoc_args = {
@@ -87,7 +87,7 @@ rule(rule_name)
         batchcmds:mkdir(sourcefile_dir)
         batchcmds:show_progress(opt.progress,
             "${color.build.object}compiling.proto.c++ %s", sourcefile_proto)
-        batchcmds:vrunv(_get_protoc(target), protoc_args, {envs = _target_envs(target)})
+        batchcmds:vrunv(_get_protoc(target, find_tool), protoc_args, {envs = _target_envs(target)})
 
         -- Preserve XMake 3.1.0's protobuf generation dependency behavior.
         batchcmds:add_depfiles(sourcefile_proto)
@@ -96,8 +96,8 @@ rule(rule_name)
     end)
 
     on_buildcmd_file(function(target, batchcmds, sourcefile_proto, opt)
-        import("core.tool.compiler")
-        import("lib.detect.find_tool")
+        local compiler = import("core.tool.compiler")
+        local find_tool = import("lib.detect.find_tool")
 
         local sourcefile_cx, sourcefile_dir = _proto_paths(target, sourcefile_proto)
         local objectfile = target:objectfile(sourcefile_cx)
@@ -121,7 +121,7 @@ rule(rule_name)
         batchcmds:mkdir(path.directory(objectfile))
         batchcmds:show_progress(opt.progress,
             "${color.build.object}sccache compiling.proto.$(mode) %s", sourcefile_cx)
-        batchcmds:vrunv(_get_sccache(target), sccache_args, {envs = envs})
+        batchcmds:vrunv(_get_sccache(target, find_tool), sccache_args, {envs = envs})
 
         -- Preserve the built-in rule's incremental metadata. Cross-run reuse is
         -- owned by sccache, whose key is based on compiler + args + preprocessed
